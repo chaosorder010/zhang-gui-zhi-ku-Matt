@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from app.ingestion import embed as embed_mod
 from app.ingestion import chunker, parsers
@@ -64,9 +63,5 @@ async def run_ingestion(data: bytes, filename: str, content_type: str | None) ->
 def reset_backend_for_tests() -> None:
     """测试期清理:清掉 embedder 缓存与 InMemory。"""
     embed_mod.get_embedder.cache_clear()
-    from app.ingestion.index import rebuild_vector_store, InMemoryVectorStore
+    from app.ingestion.index import rebuild_vector_store, InMemoryVectorStore  # noqa: PLC0415
     rebuild_vector_store(InMemoryVectorStore())
-
-
-if os.getenv("MILVUS_FALLBACK") != "1" and os.getenv("CI") != "":
-    os.environ["MILVUS_FALLBACK"] = "1"

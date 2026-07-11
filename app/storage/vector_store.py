@@ -255,9 +255,13 @@ class MilvusVectorStore(VectorStore):
     def search(self, dense_vec, sparse_vec, top_k, alpha: float = 0.7):
         """Milvus 路径用内置 RRF 重排,alpha 仅作用于 InMemoryVectorStore。
 
-        Milvus hybrid_search 把 dense/sparse 两路结果合并后 RRF,不走 α 加权 —
-        这是 Milvus 内建行为。如需 α 控制,改用 InMemoryVectorStore 或后处理。
+        Milvus 内建 RRF 不受 alpha 控制。若 caller 显式传 alpha != settings.ALPHA,
+        抛 AssertionError 提示契约(避免静默忽略导致调参假象)。
         """
+        if alpha != settings.ALPHA:
+            raise AssertionError(
+                f"MilvusVectorStore 路径不使用 alpha(内置 RRF)。"
+                f"如需 α={alpha} 控制,改用 InMemoryVectorStore 或在外部后处理。")
         store = self._active()
         if store is not self:
             return store.search(dense_vec, sparse_vec, top_k, alpha)
