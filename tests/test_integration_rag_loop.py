@@ -63,10 +63,20 @@ async def test_graph_runs_local_branch() -> None:
 @pytest.mark.asyncio
 async def test_reject_branch_empty_store() -> None:
     """空库时直接走 reject(无高质量命中)。"""
-    out = await ainvoke("随便来点什么", history=[])
-    # 空库无候选,fuse 空 → rerank 空 → reject
+    from app.graph.pipeline import ainvoke_retrieval
+    out = await ainvoke_retrieval("随便来点什么", history=[])
+    # 空库无候选,rerank 空 → reject
     assert out["route"] == "reject"
-    assert out["citations"] == []
+
+
+@pytest.mark.asyncio
+async def test_reject_branch_uncovered_query() -> None:
+    """有库但 query 与内容无关 → reject(正则则阈值触发)。"""
+    await run_ingestion(MD.encode("utf-8"), "intro.md", "text/markdown")
+    from app.graph.pipeline import ainvoke_retrieval
+    out = await ainvoke_retrieval("黑洞附近的企鹅种群如何演化?", history=[])
+    assert out["route"] == "reject", (
+        f"无关 query 应 reject, got route={out['route']} reranked_len={len(out['reranked'])}")
 
 
 @pytest.mark.asyncio

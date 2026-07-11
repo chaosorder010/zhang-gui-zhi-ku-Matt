@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from langgraph.graph import StateGraph, END, START  # type: ignore[import-untyped]
 
@@ -24,63 +24,63 @@ MAX_CONTEXT_CHARS = 6000
 # --------------------------------------------------------------------------- #
 # 节点
 # --------------------------------------------------------------------------- #
-def node_retrieve(state: RAGState) -> RAGState:
-    """路1 原始 query hybrid + 路2 HyDE hybrid;路3 MCP 占位空。"""
+def _do_retrieve(question: str) -> tuple[
+    list[tuple[ChunkRecord, float]],
+    list[tuple[ChunkRecord, float]],
+    list[tuple[ChunkRecord, float]],
+]:
+    """单 query 出三路原始召回(路1 原 query,路2 HyDE,路3 MCP 占位空)。"""
     from app.ingestion.index import get_vector_store
 
-    question = state["question"]
     store = get_vector_store()
     route1 = hybrid_search(question, store=store,
                            top_k=settings.TOP_K_RETRIEVE, alpha=settings.ALPHA)
     hypo = generate_hypothetical_doc(question)
-    route2 = hybrid_search(hypo, store=store,
-                           top_k=settings.TOP_K_RETRIEVE, alpha=settings.ALPHA) if hypo else []
+    route2 = (hybrid_search(hypo, store=store,
+                            top_k=settings.TOP_K_RETRIEVE, alpha=settings.ALPHA)
+              if hypo else [])
     route3: list[tuple[ChunkRecord, float]] = []  # TODO: MCP 网搜
-
-    return {
-        "candidates": [_to_dict(r, s) for r, s in route1 + route2 + route3],
-        "retrieval_trace": {
-            "route1": len(route1), "route2": len(route2), "route3": len(route3),
-        },
-        "route": "local",
-    }
+    return route1, route2, route3
 
 
-def node_fuse(state: RAGState) -> RAGState:
-    """RRF 三路融合(兼容路3 占位空)。"""
-    from app.ingestion.index import get_vector_store
+def node_retrieve(state: RAGState) -> RAGState:
+    """单 query 一次 embed 出三路原始召回 + RRF + 二阶 rerank + 路由决策。
 
-    store = get_vector_store()
-    question = state["question"]
-    route1 = hybrid_search(question, store=store,
-                           top_k=settings.TOP_K_RETRIEVE, alpha=settings.ALPHA)
-    hypo = generate_hypothetical_doc(question)
-    route2 = hybrid_search(hypo, store=store,
-                           top_k=settings.TOP_K_RETRIEVE, alpha=settings.ALPHA) if hypo else []
-    route3: list[tuple[ChunkRecord, float]] = []
+    整个图只此节点做一次 embed/hybrid_search,下游 fuse/rerank 做无 ops 透传(保拓扑可拓展)。
+    """
+    route1, route2, route3 = _do_retrieve(state["question"])
     fused = reciprocal_rank_fuse([route1, route2, route3], k=settings.RRF_K)
-    return {
-        "reranked": [_to_dict(r, s) for r, s in fused],
-        "retrieval_trace": {**state.get("retrieval_trace", {}),
-                            "rrf": [(r.chunk_id, s) for r, s in fused[:10]]},
-    }
-
-
-def node_rerank(state: RAGState) -> RAGState:
-    """二阶精排 top-N 送 LLM。"""
-    recs = _collect_records(state)
-    reranked = rerank(state["question"], [(r, 0.0) for r in recs],
+    reranked = rerank(state["question"], fused,
                       top_n=settings.TOP_N_RERANK)
     top = [r for r, _ in reranked]
     scores = {r.chunk_id: s for r, s in reranked}
-    new_trace = dict(state.get("retrieval_trace", {}))
-    new_trace["rerank_top"] = [(r.chunk_id, scores.get(r.chunk_id, 0.0))
-                               for r in top]
+    max_score = max(scores.values()) if scores else 0.0
+    route: Literal["local", "web", "reject"] = (
+        "reject" if not top or max_score <= settings.REJECT_THRESHOLD else "local")
     return {
+        "candidates": [_to_dict(r, s) for r, s in route1 + route2 + route3],
         "reranked": [_to_dict(r, scores.get(r.chunk_id, 0.0)) for r in top],
-        "retrieval_trace": new_trace,
         "_top_records": top,
+        "route": route,
+        "retrieval_trace": {
+            "route1": len(route1), "route2": len(route2), "route3": len(route3),
+            "rrf": [(r.chunk_id, s) for r, s in fused[:10]],
+            "rerank_top": [(r.chunk_id, scores.get(r.chunk_id, 0.0)) for r in top],
+            "route": route,
+        },
     }
+
+
+# fuse / rerank 节点是占位无 ops 透传,预留后续多级扩展。
+def node_fuse(state: RAGState) -> RAGState:
+    return {"retrieval_trace": state.get("retrieval_trace", {})}
+
+
+def node_rerank(state: RAGState) -> RAGState:
+    new_trace = dict(state.get("retrieval_trace", {}))
+    new_trace["rerank_top"] = [(d.get("chunk_id"), d.get("score", 0.0))
+                               for d in state.get("reranked", [])]
+    return {"retrieval_trace": new_trace}
 
 
 def _decide(state: RAGState) -> str:
@@ -158,9 +158,25 @@ def build_graph():  # type: ignore[no-any-return]
     return g.compile()
 
 
-async def ainvoke(question: str, history: list[dict] | None = None) -> dict:
-    """单轮问答,返回 {answer, citations, route, retrieval_trace}。"""
-    graph = build_graph()
+def build_retrieval_graph():  # type: ignore[no-any-return]
+    """仅检索 + rerank + 路由决策,不调 LLM。供 /api/query 流式 handler 用。"""
+    g = StateGraph(RAGState)  # type: ignore[arg-type]
+    g.add_node("retrieve", node_retrieve)
+    g.add_node("fuse", node_fuse)
+    g.add_node("rerank", node_rerank)
+
+    def _decide_end(state: RAGState) -> str:
+        r = _decide(state)
+        return "end" if r == "reject" else "end"
+
+    g.add_edge(START, "retrieve")
+    g.add_edge("retrieve", "fuse")
+    g.add_edge("fuse", "rerank")
+    g.add_edge("rerank", END)
+    return g.compile()
+
+
+async def _run(graph, question: str, history: list[dict] | None = None) -> dict:
     init: RAGState = {
         "question": question,
         "history": history or [],
@@ -172,7 +188,22 @@ async def ainvoke(question: str, history: list[dict] | None = None) -> dict:
         "retrieval_trace": {},
         "_top_records": [],
     }
-    out: dict[str, Any] = await graph.ainvoke(init)
+    return await graph.ainvoke(init)  # type: ignore[arg-type]
+
+
+async def ainvoke_retrieval(question: str, history: list[dict] | None = None) -> dict:
+    """仅检索 + rerank,不调 LLM。返回 {reranked, route, retrieval_trace}。"""
+    out = await _run(build_retrieval_graph(), question, history)
+    return {
+        "reranked": out.get("reranked", []),
+        "route": out.get("route", "local"),
+        "retrieval_trace": out.get("retrieval_trace", {}),
+    }
+
+
+async def ainvoke(question: str, history: list[dict] | None = None) -> dict:
+    """单轮问答,返回 {answer, citations, route, retrieval_trace}。向后兼容。"""
+    out = await _run(build_graph(), question, history)
     return {
         "answer": out.get("answer", ""),
         "citations": out.get("citations", []),
@@ -198,14 +229,16 @@ def _collect_records(state: RAGState) -> list[ChunkRecord]:
     for d in state.get("reranked", []):
         cid = d.get("chunk_id")
         if cid and cid not in out:
-            out[cid] = ChunkRecord(text=d.get("text", ""),
-                                   doc_id=d.get("doc_id", ""),
-                                   chunk_id=cid,
-                                   item_name=d.get("item_name", ""),
-                                   section=d.get("section", ""))
-    # 按 reranked 序
+            out[cid] = _rec_from_dict(d)
     order = [d.get("chunk_id") for d in state.get("reranked", [])]
     return [out[c] for c in order if c in out]
+
+
+def _rec_from_dict(d: dict) -> ChunkRecord:
+    return ChunkRecord(text=d.get("text", ""), doc_id=d.get("doc_id", ""),
+                       chunk_id=d.get("chunk_id", ""),
+                       item_name=d.get("item_name", ""),
+                       section=d.get("section", ""))
 
 
 def _citation(rec: ChunkRecord) -> object:

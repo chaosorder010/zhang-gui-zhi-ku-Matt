@@ -253,6 +253,11 @@ class MilvusVectorStore(VectorStore):
             return self._in_memory.delete(doc_id)
 
     def search(self, dense_vec, sparse_vec, top_k, alpha: float = 0.7):
+        """Milvus 路径用内置 RRF 重排,alpha 仅作用于 InMemoryVectorStore。
+
+        Milvus hybrid_search 把 dense/sparse 两路结果合并后 RRF,不走 α 加权 —
+        这是 Milvus 内建行为。如需 α 控制,改用 InMemoryVectorStore 或后处理。
+        """
         store = self._active()
         if store is not self:
             return store.search(dense_vec, sparse_vec, top_k, alpha)
@@ -290,14 +295,27 @@ class MilvusVectorStore(VectorStore):
             self._collection, reqs,
             rerank={"strategy": "rrf", "params": {"k": 60}},
             limit=top_k,
-            output_fields=["doc_id", "chunk_id", "item_name", "text"])
+            output_fields=["doc_id", "chunk_id", "item_name", "text", "section"])
+        # pymilvus 3.x 对多 AnnSearchRequest 返回 list[list[Hit]],需展平。
+        # 单请求时也可能返回 [Hit],故统一展平一层。
+        flat: list = []
+        for item in hits or []:
+            if isinstance(item, list):
+                flat.extend(item)
+            else:
+                flat.append(item)
         results: list[tuple[ChunkRecord, float]] = []
-        for hit in (hits[0] if hits else []):
+        seen: set[str] = set()
+        for hit in flat:
             ent = hit.get("entity", {})
+            cid = ent.get("chunk_id", "")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
             rec = ChunkRecord(
                 text=ent.get("text", ""),
                 doc_id=ent.get("doc_id", ""),
-                chunk_id=ent.get("chunk_id", ""),
+                chunk_id=cid,
                 item_name=ent.get("item_name", ""),
                 section=ent.get("section", ""),
             )

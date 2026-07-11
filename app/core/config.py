@@ -65,7 +65,9 @@ class Settings(BaseSettings):
     OVERLAP_TOKENS: int = Field(default=80, ge=0, description="滑动窗口重叠")
 
     #: 护栏
-    REJECT_THRESHOLD: float = Field(default=0.0, ge=0.0, description="rerank 分低于此 → reject")
+    #: fallback Jaccard 相似度通常 0.05-0.25,真 cosine 0.3+ 才算相关;
+    #: 默认 0.3 让 fallback 路径下"几乎不相关"的 query 走 reject。
+    REJECT_THRESHOLD: float = Field(default=0.3, ge=0.0, description="rerank 分低于此 → reject")
 
 
 settings = Settings()

@@ -33,6 +33,7 @@ def test_documents_upload_then_list() -> None:
 
 
 def test_query_sync_returns_citation() -> None:
+    """已覆盖中文 query 答 local + citations 至少 1 条含 preview。"""
     client = make_client()
     _seed_document(client)
     res = client.post(
@@ -41,24 +42,27 @@ def test_query_sync_returns_citation() -> None:
     )
     assert res.status_code == 200, res.text
     out = res.json()
-    assert out["route"] in ("local", "reject")
-    assert isinstance(out["citations"], list)
+    assert out["route"] == "local", f"已覆盖 query 应 route=local, got {out}"
+    assert isinstance(out["citations"], list) and len(out["citations"]) >= 1, \
+        f"citations 应 >= 1 条, got {out['citations']}"
+    c0 = out["citations"][0]
+    assert isinstance(c0.get("preview"), str) and c0["preview"]
 
 
 def test_query_uncovered_returns_reject() -> None:
-    """未覆盖问题 答"文档未覆盖"+ citations 空。"""
+    """未覆盖问题 答"文档未覆盖"+ citations 空(reject 分支真触发)。"""
     client = make_client()
     _seed_document(client)
+    # 用与入库内容完全无关的 query 触发 reject
     res = client.post(
         "/api/query",
-        json={"question": "北极熊迁徙路线是什么?", "stream": False},
+        json={"question": "黑洞附近的企鹅种群如何演化?", "stream": False},
     )
     assert res.status_code == 200, res.text
     out = res.json()
-    # fallback embed 下相关性序乱,route 可能 local 也可能 reject;
-    # 核心契约:citations 总是 list
-    assert isinstance(out["citations"], list)
-    assert isinstance(out["answer"], str)
+    assert out["route"] == "reject", f"未覆盖 query 应 reject, got route={out['route']} ans={out['answer']!r}"
+    assert out["citations"] == [], f"reject 时 citations 应为 [], got {out['citations']}"
+    assert "文档未覆盖" in out["answer"], f'reject 答含"文档未覆盖", got {out["answer"]!r}'
 
 
 def test_query_sse_streams_answer() -> None:

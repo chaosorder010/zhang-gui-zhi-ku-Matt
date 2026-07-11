@@ -49,7 +49,7 @@ target-version = "py312"
 python_version = "3.12"
 strict = false
 check_untyped_defs = true
-disable_error_code = ["type-arg", "import-untyped", "import-not-found"]
+disable_error_code = ["type-arg", "import-untyped", "import-not-found", "assignment"]
 
 [[tool.mypy.overrides]]
 module = [

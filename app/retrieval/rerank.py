@@ -10,17 +10,32 @@ log = logging.getLogger(__name__)
 
 
 class _RerankFallback:
-    """无 sentence_transformers 时保留 RRF 序(不破坏相关性)。"""
+    """无 sentence_transformers 时,用字符 bigram Jaccard 做轻量保序。
+
+    字符 bigram 对中英文都 OK(中文 2-gram 组词、英文 2-gram 分词),
+    跨域 query/文本若共享 <2 个 bigram 则 Jaccard ≈ 0(过阈值后不触发),
+    同域 query(如"功能")则 bigram「功能」命中 → Jaccard > 0.3。
+    """
 
     def score(self, query: str, cands: list[ChunkRecord]) -> list[float]:
-        # 用 query 与 chunk 的字符重叠做轻量保序
-        qt = set(query)
+        """Overlap coefficient = |A∩B|/min(|A|,|B|)。
+
+        短 query 命中长 chunk 时仍可得高分(因为分母 min).比 Jaccard 更贴
+        合"query bigram 是 chunk 子集"的语义匹配,且跨域 query 与长 chunk 的
+        少量 bigram 重合也会被 min 分母压低。
+        """
+        def _bigrams(t: str) -> set[str]:
+            s = t.strip()
+            return {s[i:i + 2] for i in range(len(s) - 1)} or {s}
+        qg = _bigrams(query)
+        if not qg:
+            return [0.0] * len(cands)
         out: list[float] = []
         for c in cands:
-            ct = set(c.text)
-            inter = len(qt & ct)
-            union = len(qt | ct) or 1
-            out.append(inter / union)
+            cg = _bigrams(c.text)
+            inter = len(qg & cg)
+            denom = min(len(qg), len(cg)) or 1
+            out.append(inter / denom)
         return out
 
 
