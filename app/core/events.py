@@ -1,4 +1,4 @@
-#: FastAPI lifespan — 启停装配 + 三依赖健康探测。
+#: FastAPI lifespan — 启停装配 + 三依赖健康探测(pymilvus 3.x)。
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -13,10 +13,11 @@ log = get_logger(__name__)
 async def _probe_milvus() -> tuple[bool, str]:
     """Milvus 探活。"""
     try:
-        from pymilvus import connections, MilvusException  # type: ignore[import-untyped]
+        from pymilvus import MilvusClient  # type: ignore[import-untyped]
 
-        connections.connect(alias="health", uri=settings.MILVUS_URI)
-        connections.disconnect("health")
+        client = MilvusClient(uri=settings.MILVUS_URI)
+        # 触发一次轻量 RPC
+        client.list_collections()
         return True, "ok"
     except Exception as exc:  # noqa: BLE001 — 探测不抛
         return False, f"{type(exc).__name__}: {exc}"

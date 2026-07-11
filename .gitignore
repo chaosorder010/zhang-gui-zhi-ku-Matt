@@ -15,3 +15,6 @@ wheels/
 .idea/
 .vscode/
 .DS_Store
+
+# local smoke/debug scripts, not for CI
+scripts/
