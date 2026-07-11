@@ -1,7 +1,50 @@
 [project]
 name = "zhang-gui-zhi-ku-matt"
 version = "0.1.0"
-description = "Add your description here"
+description = "掌柜智库 — 垂直领域企业级智能知识库,RAG 驱动,中文优先"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.4.0",
+    "langchain>=0.3.0",
+    "langgraph>=0.2.0",
+    "pymilvus>=2.4.0",
+    "motor>=3.5.0",
+    "minio>=7.2.0",
+    "httpx>=0.27.0",
+    "python-multipart>=0.0.9",
+    "PyMuPDF>=1.24.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",
+]
+dev = [
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
