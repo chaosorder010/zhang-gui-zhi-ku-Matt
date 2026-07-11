@@ -1,9 +1,13 @@
-#: RAG 状态机共享状态。
+#: RAG 状态机共享状态(LangGraph TypedDict 版 — partial return OK)。
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from langgraph.graph.message import add_messages  # type: ignore[import-untyped]
+from pydantic import BaseModel
+from typing_extensions import TypedDict
+
+from app.storage.vector_store import ChunkRecord
 
 
 class Citation(BaseModel):
@@ -12,16 +16,19 @@ class Citation(BaseModel):
     doc_id: str
     chunk_id: str
     preview: str
+    item_name: str = ""
+    score: float = 0.0
 
 
-class RAGState(BaseModel):
-    """LangGraph 状态。MVP:占位 schema,等 #3 接 LangGraph。"""
+class RAGState(TypedDict, total=False):
+    """LangGraph 状态机 — total=False 让各节点 return partial dict。"""
 
     question: str
-    history: list[dict] = Field(default_factory=list)
-    route: Literal["local", "web", "reject"] = "local"
-    candidates: list[dict] = Field(default_factory=list)
-    reranked: list[dict] = Field(default_factory=list)
-    answer: str = ""
-    citations: list[Citation] = Field(default_factory=list)
-    retrieval_trace: dict = Field(default_factory=dict)
+    history: Annotated[list[Any], add_messages]
+    route: Literal["local", "web", "reject"]
+    candidates: list[dict[str, Any]]
+    reranked: list[dict[str, Any]]
+    answer: str
+    citations: list[dict[str, Any]]
+    retrieval_trace: dict[str, Any]
+    _top_records: list[ChunkRecord]

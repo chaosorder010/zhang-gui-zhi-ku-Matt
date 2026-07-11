@@ -8,6 +8,10 @@ _REQUIRED_ENV = {
     "LLM_API_KEY": "test-key",
     "MINIO_ACCESS_KEY": "minioadmin",
     "MINIO_SECRET_KEY": "minioadmin",
+    "MILVUS_FALLBACK": "1",
+    "EMBED_FALLBACK": "1",
+    "RERANK_FALLBACK": "1",
+    "LLM_STUB": "1",   # NOTE 1:测试期全离线 — 不走云端
 }
 
 for _k, _v in _REQUIRED_ENV.items():

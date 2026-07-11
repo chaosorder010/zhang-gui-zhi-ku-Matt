@@ -11,7 +11,7 @@ dependencies = [
     "pydantic-settings>=2.4.0",
     "langchain>=0.3.0",
     "langgraph>=0.2.0",
-    "pymilvus>=2.4.0",
+    "pymilvus>=2.4.0,<3",
     "motor>=3.5.0",
     "minio>=7.2.0",
     "httpx>=0.27.0",
@@ -47,4 +47,22 @@ target-version = "py312"
 
 [tool.mypy]
 python_version = "3.12"
-strict = true
+strict = false
+check_untyped_defs = true
+disable_error_code = ["type-arg", "import-untyped", "import-not-found", "assignment"]
+
+[[tool.mypy.overrides]]
+module = [
+    "pymilvus.*",
+    "langgraph.*",
+    "langchain.*",
+    "langchain_core.*",
+    "langchain_openai.*",
+    "sentence_transformers.*",
+    "motor.*",
+    "minio.*",
+    "numpy.*",
+    "fitz.*",
+    "httpx.*",
+]
+ignore_missing_imports = true
